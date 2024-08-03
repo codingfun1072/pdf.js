@@ -66,6 +66,7 @@ class DrawLayer {
   #createSVG(box) {
     const svg = DrawLayer._svgFactory.create(1, 1, /* skipDimensions = */ true);
     this.#parent.append(svg);
+    svg.setAttribute("aria-hidden", true);
     DrawLayer.#setBox(svg, box);
 
     return svg;
@@ -135,9 +136,34 @@ class DrawLayer {
     path.setAttribute("d", outlines.toSVGPath());
     path.setAttribute("vector-effect", "non-scaling-stroke");
 
+    let maskId;
+    if (outlines.free) {
+      root.classList.add("free");
+      const mask = DrawLayer._svgFactory.createElement("mask");
+      defs.append(mask);
+      maskId = `mask_p${this.pageIndex}_${id}`;
+      mask.setAttribute("id", maskId);
+      mask.setAttribute("maskUnits", "objectBoundingBox");
+      const rect = DrawLayer._svgFactory.createElement("rect");
+      mask.append(rect);
+      rect.setAttribute("width", "1");
+      rect.setAttribute("height", "1");
+      rect.setAttribute("fill", "white");
+      const use = DrawLayer._svgFactory.createElement("use");
+      mask.append(use);
+      use.setAttribute("href", `#${pathId}`);
+      use.setAttribute("stroke", "none");
+      use.setAttribute("fill", "black");
+      use.setAttribute("fill-rule", "nonzero");
+      use.classList.add("mask");
+    }
+
     const use1 = DrawLayer._svgFactory.createElement("use");
     root.append(use1);
     use1.setAttribute("href", `#${pathId}`);
+    if (maskId) {
+      use1.setAttribute("mask", `url(#${maskId})`);
+    }
     const use2 = use1.cloneNode();
     root.append(use2);
     use1.classList.add("mainOutline");
@@ -159,7 +185,6 @@ class DrawLayer {
     const root = this.#mapping.get(id);
     const defs = root.firstChild;
     const path = defs.firstChild;
-    this.updateBox(id, line.box);
     path.setAttribute("d", line.toSVGPath());
   }
 
@@ -174,6 +199,10 @@ class DrawLayer {
 
   updateBox(id, box) {
     DrawLayer.#setBox(this.#mapping.get(id), box);
+  }
+
+  show(id, visible) {
+    this.#mapping.get(id).classList.toggle("hidden", !visible);
   }
 
   rotate(id, angle) {

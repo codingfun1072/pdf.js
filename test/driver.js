@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals pdfjsLib, pdfjsViewer */
+/* globals pdfjsLib, pdfjsTestingUtils, pdfjsViewer */
 
 const {
   AnnotationLayer,
@@ -20,13 +20,12 @@ const {
   DrawLayer,
   getDocument,
   GlobalWorkerOptions,
-  Outliner,
   PixelsPerInch,
-  PromiseCapability,
-  renderTextLayer,
   shadow,
+  TextLayer,
   XfaLayer,
 } = pdfjsLib;
+const { Outliner } = pdfjsTestingUtils;
 const { GenericL10n, parseQueryString, SimpleLinkService } = pdfjsViewer;
 
 const WAITING_TIME = 100; // ms
@@ -298,13 +297,12 @@ class Rasterize {
         `:root { --scale-factor: ${viewport.scale} }`;
 
       // Rendering text layer as HTML.
-      const task = renderTextLayer({
+      const textLayer = new TextLayer({
         textContentSource: textContent,
         container: div,
         viewport,
       });
-
-      await task.promise;
+      await textLayer.render();
 
       svg.append(foreignObject);
 
@@ -328,27 +326,22 @@ class Rasterize {
         `:root { --scale-factor: ${viewport.scale} }`;
 
       // Rendering text layer as HTML.
-      const task = renderTextLayer({
+      const textLayer = new TextLayer({
         textContentSource: textContent,
         container: dummyParent,
         viewport,
       });
+      await textLayer.render();
 
-      await task.promise;
-
-      const { _pageWidth, _pageHeight, _textContentSource, _textDivs } = task;
+      const { pageWidth, pageHeight, textDivs } = textLayer;
       const boxes = [];
-      let posRegex;
-      for (
-        let i = 0, j = 0, ii = _textContentSource.items.length;
-        i < ii;
-        i++
-      ) {
-        const { width, height, type } = _textContentSource.items[i];
+      let j = 0,
+        posRegex;
+      for (const { width, height, type } of textContent.items) {
         if (type) {
           continue;
         }
-        const { top, left } = _textDivs[j++].style;
+        const { top, left } = textDivs[j++].style;
         let x = parseFloat(left) / 100;
         let y = parseFloat(top) / 100;
         if (isNaN(x)) {
@@ -357,12 +350,12 @@ class Rasterize {
           // string, e.g. `calc(var(--scale-factor)*66.32px)`.
           let match = left.match(posRegex);
           if (match) {
-            x = parseFloat(match[1]) / _pageWidth;
+            x = parseFloat(match[1]) / pageWidth;
           }
 
           match = top.match(posRegex);
           if (match) {
-            y = parseFloat(match[1]) / _pageHeight;
+            y = parseFloat(match[1]) / pageHeight;
           }
         }
         if (width === 0 || height === 0) {
@@ -371,8 +364,8 @@ class Rasterize {
         boxes.push({
           x,
           y,
-          width: width / _pageWidth,
-          height: height / _pageHeight,
+          width: width / pageWidth,
+          height: height / pageHeight,
         });
       }
       // We set the borderWidth to 0.001 to slighly increase the size of the
@@ -397,7 +390,7 @@ class Rasterize {
 
       drawLayer.destroy();
     } catch (reason) {
-      throw new Error(`Rasterize.textLayer: "${reason?.message}".`);
+      throw new Error(`Rasterize.highlightLayer: "${reason?.message}".`);
     }
   }
 
@@ -617,7 +610,7 @@ class Driver {
 
         if (task.annotationStorage) {
           for (const annotation of Object.values(task.annotationStorage)) {
-            const { bitmapName } = annotation;
+            const { bitmapName, quadPoints } = annotation;
             if (bitmapName) {
               promise = promise.then(async doc => {
                 const response = await fetch(
@@ -649,6 +642,11 @@ class Driver {
 
                 return doc;
               });
+            }
+            if (quadPoints) {
+              // Just to ensure that the quadPoints are always a Float32Array
+              // like IRL (in order to avoid bugs like bug 1907958).
+              annotation.quadPoints = new Float32Array(quadPoints);
             }
           }
         }
@@ -684,7 +682,9 @@ class Driver {
             }
 
             task.pdfDoc = doc;
-            task.optionalContentConfigPromise = doc.getOptionalContentConfig();
+            task.optionalContentConfigPromise = doc.getOptionalContentConfig({
+              intent: task.print ? "print" : "display",
+            });
 
             if (task.optionalContent) {
               const entries = Object.entries(task.optionalContent),
@@ -745,7 +745,7 @@ class Driver {
     if (!("message" in e)) {
       return JSON.stringify(e);
     }
-    return e.message + ("stack" in e ? " at " + e.stack.split("\n")[0] : "");
+    return e.message + ("stack" in e ? " at " + e.stack.split("\n", 1)[0] : "");
   }
 
   _getLastPageNumber(task) {
@@ -1110,7 +1110,7 @@ class Driver {
   }
 
   _send(url, message) {
-    const capability = new PromiseCapability();
+    const { promise, resolve } = Promise.withResolvers();
     this.inflight.textContent = this.inFlightRequests++;
 
     fetch(url, {
@@ -1127,18 +1127,18 @@ class Driver {
         }
 
         this.inFlightRequests--;
-        capability.resolve();
+        resolve();
       })
       .catch(reason => {
         console.warn(`Driver._send failed (${url}): ${reason}`);
 
         this.inFlightRequests--;
-        capability.resolve();
+        resolve();
 
         this._send(url, message);
       });
 
-    return capability.promise;
+    return promise;
   }
 }
 

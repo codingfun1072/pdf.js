@@ -17,6 +17,7 @@ import {
   awaitPromise,
   clearInput,
   closePages,
+  closeSinglePage,
   getAnnotationStorage,
   getComputedStyleSelector,
   getFirstSerialized,
@@ -27,7 +28,15 @@ import {
   loadAndWait,
   scrollIntoView,
   waitForEntryInStorage,
+  waitForSandboxTrip,
+  waitForTimeout,
 } from "./test_utils.mjs";
+
+async function waitForScripting(page) {
+  await page.waitForFunction(
+    "window.PDFViewerApplication.scriptingReady === true"
+  );
+}
 
 describe("Interaction", () => {
   async function actAndWaitForInput(page, selector, action, clear = true) {
@@ -58,9 +67,8 @@ describe("Interaction", () => {
     it("must check that first text field has focus", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
+
           await page.waitForFunction(`window.document.activeElement !== null`);
 
           // The document has an open action in order to give the focus to 401R.
@@ -76,6 +84,8 @@ describe("Interaction", () => {
     it("must show a text field and then make in invisible when content is removed", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           let visibility = await page.$eval(
             getSelector("427R"),
             el => getComputedStyle(el).visibility
@@ -118,6 +128,8 @@ describe("Interaction", () => {
     it("must format the field with 2 digits and leave field with a click", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           await page.type(getSelector("416R"), "3.14159", { delay: 200 });
           await page.click(getSelector("419R"));
 
@@ -136,6 +148,8 @@ describe("Interaction", () => {
     it("must format the field with 2 digits, leave field with a click and again", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           await page.type(getSelector("448R"), "61803", { delay: 200 });
           await page.click(getSelector("419R"));
 
@@ -175,6 +189,8 @@ describe("Interaction", () => {
     it("must format the field with 2 digits and leave field with a TAB", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const prevSum = await page.$eval(getSelector("427R"), el => el.value);
 
           await page.type(getSelector("422R"), "2.7182818", { delay: 200 });
@@ -200,6 +216,8 @@ describe("Interaction", () => {
     it("must format the field with 2 digits and hit ESC", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           let sum = await page.$eval(getSelector("471R"), el => el.value);
           expect(sum).withContext(`In ${browserName}`).toEqual("4,24");
 
@@ -222,6 +240,8 @@ describe("Interaction", () => {
     it("must format the field with 2 digits on key ENTER", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const prevSum = await page.$eval(getSelector("427R"), el => el.value);
 
           await page.type(getSelector("419R"), "0.577215", { delay: 200 });
@@ -242,6 +262,8 @@ describe("Interaction", () => {
     it("must reset all", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           // click on a radio button
           await page.click("[data-annotation-id='449R']");
 
@@ -300,9 +322,7 @@ describe("Interaction", () => {
     it("must show values in a text input when clicking on radio buttons", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           const expected = [
             ["81R", "Group1=Choice1::1"],
@@ -328,6 +348,8 @@ describe("Interaction", () => {
     it("must show values in a text input when clicking on checkboxes", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const expected = [
             ["85R", "Check1=Yes::5"],
             ["87R", "Check2=Yes::6"],
@@ -356,6 +378,8 @@ describe("Interaction", () => {
     it("must show values in a text input when clicking on checkboxes in a group", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const expected = [
             ["90R", "Check5=Yes1::9"],
             ["91R", "Check5=Yes2::10"],
@@ -381,6 +405,8 @@ describe("Interaction", () => {
     it("must show values in a text input when clicking on checkboxes or radio with no actions", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const expected = [
             ["", "Off;Off"],
             ["94R", "Yes;Off"],
@@ -416,41 +442,35 @@ describe("Interaction", () => {
       pages = await loadAndWait("doc_actions.pdf", getSelector("47R"));
     });
 
-    afterAll(async () => {
-      await closePages(pages);
-    });
-
     it("must execute WillPrint and DidPrint actions", async () => {
-      await Promise.all(
-        pages.map(async ([browserName, page]) => {
-          if (process.platform === "win32" && browserName === "firefox") {
-            pending("Disabled in Firefox on Windows, because of bug 1662471.");
+      // Run the tests sequentially to avoid to use the same printer at the same
+      // time.
+      // And to make sure that a printer isn't locked by a process we close the
+      // page before running the next test.
+      for (const [browserName, page] of pages) {
+        await waitForScripting(page);
+
+        await clearInput(page, getSelector("47R"));
+        await page.evaluate(_ => {
+          window.document.activeElement.blur();
+        });
+        await page.waitForFunction(`${getQuerySelector("47R")}.value === ""`);
+
+        const text = await actAndWaitForInput(
+          page,
+          getSelector("47R"),
+          async () => {
+            await page.click("#print");
           }
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+        );
+        expect(text).withContext(`In ${browserName}`).toEqual("WillPrint");
+        await page.keyboard.press("Escape");
 
-          await clearInput(page, getSelector("47R"));
-          await page.evaluate(_ => {
-            window.document.activeElement.blur();
-          });
-          await page.waitForFunction(`${getQuerySelector("47R")}.value === ""`);
-
-          let text = await actAndWaitForInput(
-            page,
-            getSelector("47R"),
-            async () => {
-              await page.click("#print");
-            }
-          );
-          expect(text).withContext(`In ${browserName}`).toEqual("WillPrint");
-
-          await page.waitForFunction(`${getQuerySelector("50R")}.value !== ""`);
-
-          text = await page.$eval(getSelector("50R"), el => el.value);
-          expect(text).withContext(`In ${browserName}`).toEqual("DidPrint");
-        })
-      );
+        await page.waitForFunction(
+          `${getQuerySelector("50R")}.value === "DidPrint"`
+        );
+        await closeSinglePage(page);
+      }
     });
   });
 
@@ -468,9 +488,7 @@ describe("Interaction", () => {
     it("must execute WillSave and DidSave actions", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           try {
             // Disable download in chrome
@@ -517,9 +535,7 @@ describe("Interaction", () => {
     it("must execute PageOpen and PageClose actions", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.waitForFunction(`${getQuerySelector("47R")}.value !== ""`);
 
@@ -576,6 +592,8 @@ describe("Interaction", () => {
     it("must print authors in a text field", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const text = await actAndWaitForInput(
             page,
             getSelector("25R"),
@@ -605,6 +623,8 @@ describe("Interaction", () => {
     it("must print selected value in a text field", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           for (const num of [7, 6, 4, 3, 2, 1]) {
             await clearInput(page, getSelector("33R"));
             await page.click(`option[value=Export${num}]`);
@@ -623,6 +643,8 @@ describe("Interaction", () => {
     it("must clear and restore list elements", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           // Click on ClearItems button.
           await page.click("[data-annotation-id='34R']");
           await page.waitForFunction(
@@ -653,6 +675,8 @@ describe("Interaction", () => {
     it("must insert new elements", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           let len = 6;
           for (const num of [1, 3, 5, 6, 431, -1, 0]) {
             ++len;
@@ -691,6 +715,8 @@ describe("Interaction", () => {
     it("must delete some element", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           let len = 6;
           // Click on Restore button.
           await clearInput(page, getSelector("33R"));
@@ -742,6 +768,8 @@ describe("Interaction", () => {
     it("must change colors", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           for (const [name, ref] of [
             ["Text1", "34R"],
             ["Check1", "35R"],
@@ -815,9 +843,7 @@ describe("Interaction", () => {
     it("must compute sum of fields", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await scrollIntoView(page, getSelector("138R"));
 
@@ -878,9 +904,7 @@ describe("Interaction", () => {
     it("must check page index", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await clearInput(page, getSelector("55R"));
           await page.type(
@@ -904,6 +928,8 @@ describe("Interaction", () => {
     it("must check display", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           for (const [type, vis] of [
             ["hidden", "hidden"],
             ["noPrint", "visible"],
@@ -953,9 +979,7 @@ describe("Interaction", () => {
     it("must update fields with the same name from JS", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("27R"), "hello");
           await page.keyboard.press("Enter");
@@ -989,6 +1013,8 @@ describe("Interaction", () => {
     it("must print securityHandler value in a text field", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const text = await actAndWaitForInput(
             page,
             getSelector("25R"),
@@ -1022,9 +1048,7 @@ describe("Interaction", () => {
       // Run the tests sequentially to avoid any focus issues between the two
       // browsers when an alert is displayed.
       for (const [browserName, page] of pages) {
-        await page.waitForFunction(
-          "window.PDFViewerApplication.scriptingReady === true"
-        );
+        await waitForScripting(page);
 
         await clearInput(page, getSelector("29R"));
         await clearInput(page, getSelector("30R"));
@@ -1079,9 +1103,7 @@ describe("Interaction", () => {
       // Run the tests sequentially to avoid any focus issues between the two
       // browsers when an alert is displayed.
       for (const [browserName, page] of pages) {
-        await page.waitForFunction(
-          "window.PDFViewerApplication.scriptingReady === true"
-        );
+        await waitForScripting(page);
 
         await clearInput(page, getSelector("29R"));
         await clearInput(page, getSelector("30R"));
@@ -1136,9 +1158,7 @@ describe("Interaction", () => {
       // Run the tests sequentially to avoid any focus issues between the two
       // browsers when an alert is displayed.
       for (const [browserName, page] of pages) {
-        await page.waitForFunction(
-          "window.PDFViewerApplication.scriptingReady === true"
-        );
+        await waitForScripting(page);
 
         await clearInput(page, getSelector("29R"));
         await clearInput(page, getSelector("30R"));
@@ -1192,9 +1212,7 @@ describe("Interaction", () => {
     it("must convert input to uppercase", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("27R"), "Hello", { delay: 200 });
           await page.waitForFunction(
@@ -1258,9 +1276,7 @@ describe("Interaction", () => {
     it("must check that an infinite loop is not triggered", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.click(getSelector("28R"));
           await page.$eval(getSelector("28R"), el =>
@@ -1311,9 +1327,7 @@ describe("Interaction", () => {
     it("must check that field value is correctly updated", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("29R"), "Hello World", { delay: 200 });
           await page.click(getSelector("27R"));
@@ -1352,9 +1366,7 @@ describe("Interaction", () => {
     it("must check that field value is correctly formatted", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let text = await page.$eval(getSelector("75R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("150.32 €");
@@ -1386,9 +1398,7 @@ describe("Interaction", () => {
     it("must check that a button and text field with a border are hidden", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let visibility = await page.$eval(
             "[data-annotation-id='35R']",
@@ -1441,9 +1451,7 @@ describe("Interaction", () => {
     it("must check that data-main-rotation is correct", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let base = 0;
 
@@ -1489,9 +1497,7 @@ describe("Interaction", () => {
     it("must check that a values is correctly updated on a field and its siblings", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await clearInput(page, getSelector("39R"));
           await page.type(getSelector("39R"), "123", { delay: 10 });
@@ -1536,49 +1542,33 @@ describe("Interaction", () => {
 
     it("must check that charLimit is correctly set", async () => {
       await Promise.all(
-        pages.map(async ([browserName, page]) => {
+        pages.map(async ([, page]) => {
+          await waitForScripting(page);
+
+          // The default charLimit is 0, which indicates unlimited text length.
+          await page.type(getSelector("7R"), "abcdefghij", { delay: 10 });
           await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
+            `${getQuerySelector("7R")}.value === "abcdefghij"`
           );
 
-          await clearInput(page, getSelector("7R"));
-          // By default the charLimit is 0 which means that the input
-          // length is unlimited.
-          await page.type(getSelector("7R"), "abcdefghijklmnopq", {
-            delay: 10,
-          });
-
-          let value = await page.$eval(getSelector("7R"), el => el.value);
-          expect(value)
-            .withContext(`In ${browserName}`)
-            .toEqual("abcdefghijklmnopq");
-
-          // charLimit is set to 1
+          // Increase the charLimit to 1 (this truncates the existing text).
           await page.click(getSelector("9R"));
-
-          await page.waitForFunction(
-            `document.querySelector('${getSelector(
-              "7R"
-            )}').value !== "abcdefgh"`
-          );
-
-          value = await page.$eval(getSelector("7R"), el => el.value);
-          expect(value).withContext(`In ${browserName}`).toEqual("a");
+          await waitForSandboxTrip(page);
+          await page.waitForFunction(`${getQuerySelector("7R")}.value === "a"`);
 
           await clearInput(page, getSelector("7R"));
           await page.type(getSelector("7R"), "xyz", { delay: 10 });
+          await page.waitForFunction(`${getQuerySelector("7R")}.value === "x"`);
 
-          value = await page.$eval(getSelector("7R"), el => el.value);
-          expect(value).withContext(`In ${browserName}`).toEqual("x");
-
-          // charLimit is set to 2
+          // Increase the charLimit to 2.
           await page.click(getSelector("9R"));
+          await waitForSandboxTrip(page);
 
           await clearInput(page, getSelector("7R"));
           await page.type(getSelector("7R"), "xyz", { delay: 10 });
-
-          value = await page.$eval(getSelector("7R"), el => el.value);
-          expect(value).withContext(`In ${browserName}`).toEqual("xy");
+          await page.waitForFunction(
+            `${getQuerySelector("7R")}.value === "xy"`
+          );
         })
       );
     });
@@ -1598,9 +1588,7 @@ describe("Interaction", () => {
     it("must check field value is treated by default as a number", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("30R"), "123", {
             delay: 10,
@@ -1634,9 +1622,7 @@ describe("Interaction", () => {
     it("must check field value is correctly updated when committed with ENTER key", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("27R"), "abc", {
             delay: 10,
@@ -1685,9 +1671,7 @@ describe("Interaction", () => {
     it("must check field value is correctly updated when committed with ENTER key", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let value = "A";
           for (const [displayValue, exportValue] of [
@@ -1711,10 +1695,9 @@ describe("Interaction", () => {
             await clearInput(page, getSelector("27R"));
             await page.type(getSelector("27R"), exportValue);
             await page.click("[data-annotation-id='28R']");
-            await page.waitForTimeout(10);
-
-            value = await page.$eval(getSelector("24R"), el => el.value);
-            expect(value).withContext(`In ${browserName}`).toEqual(exportValue);
+            await page.waitForFunction(
+              `${getQuerySelector("24R")}.value === "${exportValue}"`
+            );
           }
         })
       );
@@ -1735,9 +1718,7 @@ describe("Interaction", () => {
     it("must check the field value set when the document is open", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.waitForFunction(`${getQuerySelector("27R")}.value !== ""`);
 
@@ -1750,16 +1731,16 @@ describe("Interaction", () => {
     it("must check the format action is called when setFocus is used", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.type(getSelector("30R"), "abc", { delay: 200 });
           await page.waitForFunction(
             `${getQuerySelector("30R")}.value !== "abc"`
           );
-          await page.waitForTimeout(100);
 
+          await page.waitForFunction(
+            `window.document.activeElement.getAttribute("data-element-id") !== "30R"`
+          );
           const focusedId = await page.evaluate(_ =>
             window.document.activeElement.getAttribute("data-element-id")
           );
@@ -1786,17 +1767,19 @@ describe("Interaction", () => {
       pages = await loadAndWait(
         "autoprint.pdf",
         "",
-        null /* pageSetup = */,
+        null /* zoom = */,
         async page => {
           printHandles.set(
             page,
-            await page.evaluateHandle(() => [
+            page.evaluateHandle(() => [
               new Promise(resolve => {
                 globalThis.printResolve = resolve;
               }),
             ])
           );
           await page.waitForFunction(() => {
+            // We don't really need to print the document.
+            window.print = () => {};
             if (!window.PDFViewerApplication?.eventBus) {
               return false;
             }
@@ -1823,7 +1806,9 @@ describe("Interaction", () => {
     it("must check if printing is triggered when the document is open", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await awaitPromise(printHandles.get(page));
+          await waitForScripting(page);
+
+          await awaitPromise(await printHandles.get(page));
         })
       );
     });
@@ -1843,9 +1828,7 @@ describe("Interaction", () => {
     it("must check that a field value with a number isn't changed", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.click(getSelector("25R"));
           await page.type(getSelector("25R"), "00000000123", { delay: 10 });
@@ -1854,7 +1837,7 @@ describe("Interaction", () => {
           expect(text).withContext(`In ${browserName}`).toEqual("00000000123");
 
           await page.click(getSelector("26R"));
-          await page.waitForTimeout(10);
+          await waitForSandboxTrip(page);
 
           text = await page.$eval(getSelector("25R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("00000000123");
@@ -1877,9 +1860,7 @@ describe("Interaction", () => {
     it("must check that a field value with a number with a comma has the correct value", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let text = await page.$eval(getSelector("22R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("5,25");
@@ -1888,13 +1869,15 @@ describe("Interaction", () => {
           expect(text).withContext(`In ${browserName}`).toEqual("5,25");
 
           await page.click(getSelector("22R"));
-          await page.waitForTimeout(10);
+          await waitForSandboxTrip(page);
 
           text = await page.$eval(getSelector("22R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("5,25");
 
           await page.click(getSelector("31R"));
-          await page.waitForTimeout(10);
+          await page.waitForFunction(
+            `${getQuerySelector("31R")}.value !== "5,25"`
+          );
 
           text = await page.$eval(getSelector("31R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("5.25");
@@ -1917,24 +1900,20 @@ describe("Interaction", () => {
     it("must check that a field has the correct value when a choice is changed", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let text = await page.$eval(getSelector("44R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("");
 
           await page.select(getSelector("6R"), "Yes");
-          await page.waitForTimeout(10);
-
+          await page.waitForFunction(`${getQuerySelector("44R")}.value !== ""`);
           text = await page.$eval(getSelector("44R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("Yes");
 
           await clearInput(page, getSelector("44R"));
 
           await page.select(getSelector("6R"), "No");
-          await page.waitForTimeout(10);
-
+          await page.waitForFunction(`${getQuerySelector("44R")}.value !== ""`);
           text = await page.$eval(getSelector("44R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("No");
         })
@@ -1956,9 +1935,7 @@ describe("Interaction", () => {
     it("must check that a field has the correct formatted value", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let text = await page.$eval(getSelector("23R"), el => el.value);
           expect(text)
@@ -1979,25 +1956,17 @@ describe("Interaction", () => {
     it("must check that a field is empty", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let text = await page.$eval(getSelector("26R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("");
 
           await page.click(getSelector("26R"));
           await page.type(getSelector("26R"), "abcde", { delay: 10 });
-
           await page.click(getSelector("23R"));
-          await page.waitForTimeout(10);
-          await page.click(getSelector("26R"));
-
-          await kbSelectAll(page);
-          await page.keyboard.press("Backspace");
-
+          await clearInput(page, getSelector("26R"));
           await page.click(getSelector("23R"));
-          await page.waitForTimeout(10);
+          await waitForSandboxTrip(page);
 
           text = await page.$eval(getSelector("26R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("");
@@ -2020,6 +1989,8 @@ describe("Interaction", () => {
     it("must check that a field has the correct formatted value", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
+          await waitForScripting(page);
+
           const hasVisibleCanvas = await page.$eval(
             `[data-annotation-id="9R"] > canvas`,
             elem => elem && !elem.hasAttribute("hidden")
@@ -2076,9 +2047,7 @@ describe("Interaction", () => {
     it("must check that invisible fields are made visible", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let visibility = await page.$eval(
             getSelector("7R"),
@@ -2093,8 +2062,10 @@ describe("Interaction", () => {
           expect(visibility).withContext(`In ${browserName}`).toEqual("hidden");
 
           await page.click(getSelector("11R"));
-          await page.waitForTimeout(10);
 
+          await page.waitForFunction(
+            `${getComputedStyleSelector("7R")}.visibility !== "hidden"`
+          );
           visibility = await page.$eval(
             getSelector("7R"),
             el => getComputedStyle(el).visibility
@@ -2103,6 +2074,9 @@ describe("Interaction", () => {
             .withContext(`In ${browserName}`)
             .toEqual("visible");
 
+          await page.waitForFunction(
+            `${getComputedStyleSelector("8R")}.visibility !== "hidden"`
+          );
           visibility = await page.$eval(
             getSelector("8R"),
             el => getComputedStyle(el).visibility
@@ -2129,9 +2103,7 @@ describe("Interaction", () => {
     it("must check that checkboxes are correctly resetted", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           let readonly = await page.$eval(
             getSelector("353R"),
@@ -2139,28 +2111,37 @@ describe("Interaction", () => {
           );
           expect(readonly).withContext(`In ${browserName}`).toEqual(true);
           await page.click(getSelector("334R"));
-          await page.waitForTimeout(10);
+          await waitForSandboxTrip(page);
 
           readonly = await page.$eval(getSelector("353R"), el => el.disabled);
           expect(readonly).withContext(`In ${browserName}`).toEqual(true);
           await page.click(getSelector("351R"));
-          await page.waitForTimeout(10);
+          await waitForSandboxTrip(page);
 
           readonly = await page.$eval(getSelector("353R"), el => el.disabled);
           expect(readonly).withContext(`In ${browserName}`).toEqual(true);
           await page.click(getSelector("352R"));
-          await page.waitForTimeout(10);
+          await page.waitForFunction(
+            `${getQuerySelector("353R")}.disabled !== true`
+          );
 
           readonly = await page.$eval(getSelector("353R"), el => el.disabled);
           expect(readonly).withContext(`In ${browserName}`).toEqual(false);
 
           await page.click(getSelector("353R"));
-          await page.waitForTimeout(10);
+          await page.waitForFunction(
+            `${getQuerySelector("353R")}.checked !== false`
+          );
 
           let checked = await page.$eval(getSelector("353R"), el => el.checked);
           expect(checked).withContext(`In ${browserName}`).toEqual(true);
           await page.click(getSelector("334R"));
-          await page.waitForTimeout(10);
+          await page.waitForFunction(
+            `${getQuerySelector("353R")}.disabled !== false`
+          );
+          await page.waitForFunction(
+            `${getQuerySelector("353R")}.checked !== true`
+          );
 
           readonly = await page.$eval(getSelector("353R"), el => el.disabled);
           expect(readonly).withContext(`In ${browserName}`).toEqual(true);
@@ -2192,23 +2173,21 @@ describe("Interaction", () => {
     it("must check that focus/blur callbacks aren't called", async () => {
       await Promise.all(
         pages.map(async ([browserName, page], i) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.click(getSelector("55R"));
           await page.type(getSelector("55R"), "Hello", { delay: 10 });
           await page.click(getSelector("56R"));
-          await page.waitForTimeout(10);
 
           await page.click(getSelector("55R"));
           await page.type(getSelector("55R"), " World", { delay: 10 });
-          await page.waitForTimeout(10);
 
           await otherPages[i].bringToFront();
-          await otherPages[i].waitForTimeout(100);
+          // eslint-disable-next-line no-restricted-syntax
+          await waitForTimeout(100);
           await page.bringToFront();
-          await page.waitForTimeout(100);
+          // eslint-disable-next-line no-restricted-syntax
+          await waitForTimeout(100);
 
           const text = await page.$eval(getSelector("55R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("Hello World");
@@ -2238,12 +2217,9 @@ describe("Interaction", () => {
     it("must check that blur callback is called", async () => {
       await Promise.all(
         pages.map(async ([browserName, page], i) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.click(getSelector("25R"));
-          await page.waitForTimeout(10);
           await page.click(getSelector("26R"));
 
           await page.waitForFunction(
@@ -2280,11 +2256,9 @@ describe("Interaction", () => {
     it("must check that only one radio is selected", async () => {
       await Promise.all(
         pages.map(async ([browserName, page], i) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
-          await scrollIntoView(page, getSelector("22R"));
+          await waitForScripting(page);
 
+          await scrollIntoView(page, getSelector("22R"));
           await page.click(getSelector("25R"));
           await waitForEntryInStorage(page, "25R", { value: true });
 
@@ -2346,9 +2320,7 @@ describe("Interaction", () => {
     it("must check the number has the correct number of decimals", async () => {
       await Promise.all(
         pages.map(async ([browserName, page], i) => {
-          await page.waitForFunction(
-            "window.PDFViewerApplication.scriptingReady === true"
-          );
+          await waitForScripting(page);
 
           await page.click(getSelector("15R"));
           await page.type(getSelector("15R"), "3");
@@ -2362,6 +2334,134 @@ describe("Interaction", () => {
 
           const text = await page.$eval(getSelector("16R"), el => el.value);
           expect(text).withContext(`In ${browserName}`).toEqual("0.900");
+        })
+      );
+    });
+  });
+
+  describe("Textfield with a zip code starting with 0", () => {
+    let pages;
+    let otherPages;
+
+    beforeAll(async () => {
+      otherPages = await Promise.all(
+        global.integrationSessions.map(async session =>
+          session.browser.newPage()
+        )
+      );
+      pages = await loadAndWait("bug1889122.pdf", getSelector("24R"));
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+      await Promise.all(otherPages.map(page => page.close()));
+    });
+
+    it("must check the zip code is correctly formatted", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page], i) => {
+          await waitForScripting(page);
+
+          await page.click(getSelector("24R"));
+          await page.type(getSelector("24R"), "01234", { delay: 10 });
+          await page.keyboard.press("Tab");
+          await waitForSandboxTrip(page);
+
+          const text = await page.$eval(getSelector("24R"), el => el.value);
+          expect(text).withContext(`In ${browserName}`).toEqual("01234");
+        })
+      );
+    });
+  });
+
+  describe("Value of event.change when a choice list is modified", () => {
+    let pages;
+    let otherPages;
+
+    beforeAll(async () => {
+      otherPages = await Promise.all(
+        global.integrationSessions.map(async session =>
+          session.browser.newPage()
+        )
+      );
+      pages = await loadAndWait("issue17998.pdf", getSelector("7R"));
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+      await Promise.all(otherPages.map(page => page.close()));
+    });
+
+    it("must check the properties of the event", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page], i) => {
+          await waitForScripting(page);
+
+          for (const [value, expected] of [
+            ["b", "change=B,changeEx=b,value=A"],
+            ["c", "change=C,changeEx=c,value=B"],
+            ["a", "change=A,changeEx=a,value=C"],
+          ]) {
+            await page.select(getSelector("7R"), value);
+            await page.waitForFunction(
+              `${getQuerySelector("10R")}.value !== ""`
+            );
+            const text = await page.$eval(getSelector("10R"), el => el.value);
+            expect(text).withContext(`In ${browserName}`).toEqual(expected);
+            await clearInput(page, getSelector("10R"));
+          }
+        })
+      );
+    });
+  });
+
+  describe("PageOpen and PageClose actions in fields", () => {
+    let pages;
+    let otherPages;
+
+    beforeAll(async () => {
+      otherPages = await Promise.all(
+        global.integrationSessions.map(async session =>
+          session.browser.newPage()
+        )
+      );
+      pages = await loadAndWait("issue18305.pdf", getSelector("7R"));
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+      await Promise.all(otherPages.map(page => page.close()));
+    });
+
+    it("must check that PageOpen/PageClose actions are correctly executed", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page], i) => {
+          await waitForScripting(page);
+
+          const buttonSelector = `[data-annotation-id="25R"`;
+          await page.waitForSelector(buttonSelector, {
+            timeout: 0,
+          });
+
+          const inputSelector = getSelector("7R");
+          let text = await page.$eval(inputSelector, el => el.value);
+          expect(text).withContext(`In ${browserName}`).toEqual("");
+
+          text = await actAndWaitForInput(
+            page,
+            inputSelector,
+            () => scrollIntoView(page, buttonSelector),
+            false
+          );
+          expect(text).withContext(`In ${browserName}`).toEqual("PageOpen");
+
+          text = await actAndWaitForInput(
+            page,
+            inputSelector,
+            () => scrollIntoView(page, inputSelector),
+            false
+          );
+          expect(text).withContext(`In ${browserName}`).toEqual("PageClose");
         })
       );
     });

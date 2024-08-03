@@ -19,6 +19,7 @@ import {
   BaseException,
   objectSize,
   stringToPDFString,
+  Util,
   warn,
 } from "../shared/util.js";
 import { Dict, isName, Ref, RefSet } from "./primitives.js";
@@ -216,6 +217,60 @@ function readUint32(data, offset) {
 // Checks if ch is one of the following characters: SPACE, TAB, CR or LF.
 function isWhiteSpace(ch) {
   return ch === 0x20 || ch === 0x09 || ch === 0x0d || ch === 0x0a;
+}
+
+/**
+ * Checks if something is an Array containing only boolean values,
+ * and (optionally) checks its length.
+ * @param {any} arr
+ * @param {number | null} len
+ * @returns {boolean}
+ */
+function isBooleanArray(arr, len) {
+  return (
+    Array.isArray(arr) &&
+    (len === null || arr.length === len) &&
+    arr.every(x => typeof x === "boolean")
+  );
+}
+
+/**
+ * Checks if something is an Array containing only numbers,
+ * and (optionally) checks its length.
+ * @param {any} arr
+ * @param {number | null} len
+ * @returns {boolean}
+ */
+function isNumberArray(arr, len) {
+  if (Array.isArray(arr)) {
+    return (
+      (len === null || arr.length === len) &&
+      arr.every(x => typeof x === "number")
+    );
+  }
+
+  // This check allows us to have typed arrays but not the
+  // BigInt64Array/BigUint64Array types (their elements aren't "number").
+  return (
+    ArrayBuffer.isView(arr) &&
+    (arr.length === 0 || typeof arr[0] === "number") &&
+    (len === null || arr.length === len)
+  );
+}
+
+// Returns the matrix, or the fallback value if it's invalid.
+function lookupMatrix(arr, fallback) {
+  return isNumberArray(arr, 6) ? arr : fallback;
+}
+
+// Returns the rectangle, or the fallback value if it's invalid.
+function lookupRect(arr, fallback) {
+  return isNumberArray(arr, 4) ? arr : fallback;
+}
+
+// Returns the normalized rectangle, or the fallback value if it's invalid.
+function lookupNormalRect(arr, fallback) {
+  return isNumberArray(arr, 4) ? Util.normalizeRect(arr) : fallback;
 }
 
 /**
@@ -567,6 +622,10 @@ function getNewAnnotationsMap(annotationStorage) {
   return newAnnotationsByPage.size > 0 ? newAnnotationsByPage : null;
 }
 
+function stringToAsciiOrUTF16BE(str) {
+  return isAscii(str) ? str : stringToUTF16String(str, /* bigEndian = */ true);
+}
+
 function isAscii(str) {
   return /^[\x00-\x7F]*$/.test(str);
 }
@@ -611,6 +670,19 @@ function getRotationMatrix(rotation, width, height) {
   }
 }
 
+/**
+ * Get the number of bytes to use to represent the given positive integer.
+ * If n is zero, the function returns 0 which means that we don't need to waste
+ * a byte to represent it.
+ * @param {number} x - a positive integer.
+ * @returns {number}
+ */
+function getSizeInBytes(x) {
+  // n bits are required for numbers up to 2^n - 1.
+  // So for a number x, we need ceil(log2(1 + x)) bits.
+  return Math.ceil(Math.ceil(Math.log2(1 + x)) / 8);
+}
+
 export {
   arrayBuffersToBytes,
   codePointIter,
@@ -622,9 +694,15 @@ export {
   getLookupTableFactory,
   getNewAnnotationsMap,
   getRotationMatrix,
+  getSizeInBytes,
   isAscii,
+  isBooleanArray,
+  isNumberArray,
   isWhiteSpace,
   log2,
+  lookupMatrix,
+  lookupNormalRect,
+  lookupRect,
   MissingDataException,
   numberToString,
   ParserEOFException,
@@ -634,6 +712,7 @@ export {
   readUint16,
   readUint32,
   recoverJsURL,
+  stringToAsciiOrUTF16BE,
   stringToUTF16HexString,
   stringToUTF16String,
   toRomanNumerals,

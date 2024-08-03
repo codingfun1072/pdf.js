@@ -41,10 +41,12 @@ const BASELINE_FACTOR = LINE_DESCENT_FACTOR / LINE_FACTOR;
  * how these flags are being used:
  *  - ANY, DISPLAY, and PRINT are the normal rendering intents, note the
  *    `PDFPageProxy.{render, getOperatorList, getAnnotations}`-methods.
+ *  - SAVE is used, on the worker-thread, when saving modified annotations.
  *  - ANNOTATIONS_FORMS, ANNOTATIONS_STORAGE, ANNOTATIONS_DISABLE control which
  *    annotations are rendered onto the canvas (i.e. by being included in the
  *    operatorList), note the `PDFPageProxy.{render, getOperatorList}`-methods
  *    and their `annotationMode`-option.
+ *  - IS_EDITING is used when editing is active in the viewer.
  *  - OPLIST is used with the `PDFPageProxy.getOperatorList`-method, note the
  *    `OperatorList`-constructor (on the worker-thread).
  */
@@ -56,6 +58,7 @@ const RenderingIntentFlag = {
   ANNOTATIONS_FORMS: 0x10,
   ANNOTATIONS_STORAGE: 0x20,
   ANNOTATIONS_DISABLE: 0x40,
+  IS_EDITING: 0x80,
   OPLIST: 0x100,
 };
 
@@ -89,6 +92,8 @@ const AnnotationEditorParamsType = {
   HIGHLIGHT_COLOR: 31,
   HIGHLIGHT_DEFAULT_COLOR: 32,
   HIGHLIGHT_THICKNESS: 33,
+  HIGHLIGHT_FREE: 34,
+  HIGHLIGHT_SHOW_ALL: 35,
 };
 
 // Permission flags from Table 22, Section 7.6.3.2 of the PDF specification.
@@ -337,6 +342,8 @@ const OPS = {
   paintImageMaskXObjectRepeat: 89,
   paintSolidColorImageMask: 90,
   constructPath: 91,
+  setStrokeTransparent: 92,
+  setFillTransparent: 93,
 };
 
 const PasswordResponses = {
@@ -640,7 +647,7 @@ class FeatureTest {
   }
 }
 
-const hexNumbers = [...Array(256).keys()].map(n =>
+const hexNumbers = Array.from(Array(256).keys(), n =>
   n.toString(16).padStart(2, "0")
 );
 
@@ -1029,43 +1036,6 @@ function getModificationDate(date = new Date()) {
   return buffer.join("");
 }
 
-class PromiseCapability {
-  #settled = false;
-
-  constructor() {
-    /**
-     * @type {Promise<any>} The Promise object.
-     */
-    this.promise = new Promise((resolve, reject) => {
-      /**
-       * @type {function} Fulfills the Promise.
-       */
-      this.resolve = data => {
-        this.#settled = true;
-        resolve(data);
-      };
-
-      /**
-       * @type {function} Rejects the Promise.
-       */
-      this.reject = reason => {
-        if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
-          assert(reason instanceof Error, 'Expected valid "reason" argument.');
-        }
-        this.#settled = true;
-        reject(reason);
-      };
-    });
-  }
-
-  /**
-   * @type {boolean} If the Promise has been fulfilled/rejected.
-   */
-  get settled() {
-    return this.#settled;
-  }
-}
-
 let NormalizeRegex = null;
 let NormalizationMap = null;
 function normalizeUnicode(str) {
@@ -1108,6 +1078,18 @@ function getUuid() {
 
 const AnnotationPrefix = "pdfjs_internal_id_";
 
+const FontRenderOps = {
+  BEZIER_CURVE_TO: 0,
+  MOVE_TO: 1,
+  LINE_TO: 2,
+  QUADRATIC_CURVE_TO: 3,
+  RESTORE: 4,
+  SAVE: 5,
+  SCALE: 6,
+  TRANSFORM: 7,
+  TRANSLATE: 8,
+};
+
 export {
   AbortException,
   AnnotationActionEventType,
@@ -1130,6 +1112,7 @@ export {
   DocumentActionEventType,
   FeatureTest,
   FONT_IDENTITY_MATRIX,
+  FontRenderOps,
   FormatError,
   getModificationDate,
   getUuid,
@@ -1152,7 +1135,6 @@ export {
   PasswordException,
   PasswordResponses,
   PermissionFlag,
-  PromiseCapability,
   RenderingIntentFlag,
   setVerbosityLevel,
   shadow,
