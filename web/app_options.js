@@ -193,12 +193,12 @@ const defaultOptions = {
   enableAltTextModelDownload: {
     /** @type {boolean} */
     value: true,
-    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE + OptionKind.EVENT_DISPATCH,
   },
   enableGuessAltText: {
     /** @type {boolean} */
     value: true,
-    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE + OptionKind.EVENT_DISPATCH,
   },
   enableHighlightEditor: {
     // We'll probably want to make some experiments before enabling this
@@ -583,7 +583,9 @@ class AppOptions {
   }
 
   constructor() {
-    throw new Error("Cannot initialize AppOptions.");
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+      throw new Error("Cannot initialize AppOptions.");
+    }
   }
 
   static get(name) {
