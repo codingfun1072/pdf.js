@@ -78,7 +78,7 @@ class AltText {
       if (this.#useNewAltTextFlow) {
         this.#editor._reportTelemetry({
           action: "pdfjs.image.alt_text.image_status_label_clicked",
-          label: this.#label,
+          data: { label: this.#label },
         });
       }
     };
@@ -213,6 +213,13 @@ class AltText {
     this.#altTextButton.disabled = !enabled;
   }
 
+  shown() {
+    this.#editor._reportTelemetry({
+      action: "pdfjs.image.alt_text.image_status_label_displayed",
+      data: { label: this.#label },
+    });
+  }
+
   destroy() {
     this.#altTextButton?.remove();
     this.#altTextButton = null;
@@ -235,10 +242,6 @@ class AltText {
       const label = this.#label;
       // TODO: Update the l10n keys to avoid this.
       const type = label === "review" ? "to-review" : label;
-      this.#editor._reportTelemetry({
-        action: "pdfjs.image.alt_text.image_status_label_displayed",
-        label,
-      });
       button.classList.toggle("done", !!this.#altText);
       AltText._l10nPromise
         .get(`pdfjs-editor-new-alt-text-${type}-button-label`)
@@ -276,8 +279,7 @@ class AltText {
       this.#altTextTooltip = tooltip = document.createElement("span");
       tooltip.className = "tooltip";
       tooltip.setAttribute("role", "tooltip");
-      const id = (tooltip.id = `alt-text-tooltip-${this.#editor.id}`);
-      button.setAttribute("aria-describedby", id);
+      tooltip.id = `alt-text-tooltip-${this.#editor.id}`;
 
       const DELAY_TO_SHOW_TOOLTIP = 100;
       const signal = this.#editor._uiManager._signal;

@@ -106,11 +106,6 @@ describe("Stamp Editor", () => {
     it("must load a PNG which is bigger than a page", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          if (browserName === "firefox") {
-            // Disabled in Firefox, because of https://bugzilla.mozilla.org/1553847.
-            return;
-          }
-
           await switchToStamp(page);
           await page.click("#editorStampAddImage");
 
@@ -138,11 +133,6 @@ describe("Stamp Editor", () => {
     it("must load a SVG", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          if (browserName === "firefox") {
-            // Disabled in Firefox, because of https://bugzilla.mozilla.org/1553847.
-            return;
-          }
-
           await page.click("#editorStampAddImage");
           const input = await page.$("#stampEditorFileInput");
           await input.uploadFile(
@@ -183,11 +173,6 @@ describe("Stamp Editor", () => {
     it("must check that an added image stay within the page", async () => {
       await Promise.all(
         pages.map(async ([browserName, page]) => {
-          if (browserName === "firefox") {
-            // Disabled in Firefox, because of https://bugzilla.mozilla.org/1553847.
-            return;
-          }
-
           await switchToStamp(page);
           const names = ["bottomLeft", "bottomRight", "topRight", "topLeft"];
 
@@ -847,7 +832,13 @@ describe("Stamp Editor", () => {
         "empty.pdf",
         ".annotationEditorLayer",
         null,
-        null,
+        {
+          eventBusSetup: eventBus => {
+            eventBus.on("annotationeditoruimanager", ({ uiManager }) => {
+              window.uiManager = uiManager;
+            });
+          },
+        },
         {
           enableAltText: true,
           enableUpdatedAddImage: true,
@@ -1059,6 +1050,50 @@ describe("Stamp Editor", () => {
           tooltipSelector
         );
         expect(tooltipText).toEqual("Hello World");
+
+        // Click on the Review button.
+        await page.click(buttonSelector);
+        await page.waitForSelector("#newAltTextDialog", { visible: true });
+        await page.click("#newAltTextCreateAutomaticallyButton");
+        await page.click("#newAltTextCancel");
+        await page.waitForSelector("#newAltTextDialog", { visible: false });
+      }
+    });
+
+    it("must check the new alt text flow (part 2)", async () => {
+      // Run sequentially to avoid clipboard issues.
+      for (const [, page] of pages) {
+        await switchToStamp(page);
+
+        // Add an image.
+        await copyImage(page, "../images/firefox_logo.png", 0);
+        const editorSelector = getEditorSelector(0);
+        await page.waitForSelector(editorSelector);
+        await waitForSerialized(page, 1);
+
+        // Wait for the dialog to be visible.
+        await page.waitForSelector("#newAltTextDialog", { visible: true });
+
+        // Wait for the spinner to be visible.
+        await page.waitForSelector("#newAltTextDescriptionContainer.loading");
+
+        // Check we've the disclaimer.
+        await page.waitForSelector("#newAltTextDisclaimer", { visible: true });
+
+        // Click in the textarea in order to stop the guessing.
+        await page.click("#newAltTextDescriptionTextarea");
+        await page.waitForFunction(() =>
+          document
+            .getElementById("newAltTextTitle")
+            .textContent.startsWith("Add ")
+        );
+
+        // Check we haven't the disclaimer.
+        await page.waitForSelector("#newAltTextDisclaimer", { visible: false });
+
+        // Click on the Not Now button.
+        await page.click("#newAltTextNotNow");
+        await page.waitForSelector("#newAltTextDialog", { visible: false });
       }
     });
   });

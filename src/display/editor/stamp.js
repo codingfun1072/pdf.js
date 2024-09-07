@@ -108,7 +108,7 @@ class StampEditor extends AnnotationEditor {
   get telemetryFinalData() {
     return {
       type: "stamp",
-      hasAltText: this.hasAltTextData(),
+      hasAltText: !!this.altTextData?.altText,
     };
   }
 
@@ -159,7 +159,7 @@ class StampEditor extends AnnotationEditor {
     ) {
       this._reportTelemetry({
         action: "pdfjs.image.image_added",
-        data: { alt_text_modal: false },
+        data: { alt_text_modal: false, alt_text_type: "empty" },
       });
       try {
         // The alt-text dialog isn't opened but we still want to guess the alt
@@ -373,6 +373,7 @@ class StampEditor extends AnnotationEditor {
 
     super.render();
     this.div.hidden = true;
+    this.div.setAttribute("role", "figure");
 
     this.addAltTextButton();
 
@@ -425,7 +426,9 @@ class StampEditor extends AnnotationEditor {
 
     this._uiManager.enableWaiting(false);
     const canvas = (this.#canvas = document.createElement("canvas"));
-    div.append(canvas);
+    canvas.setAttribute("role", "img");
+    this.addContainer(canvas);
+
     if (
       !this._uiManager.useNewAltTextWhenAddingImage ||
       !this._uiManager.useNewAltTextFlow
