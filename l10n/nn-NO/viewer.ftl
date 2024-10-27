@@ -105,6 +105,14 @@ pdfjs-document-properties-button-label = Dokumenteigenskapar…
 pdfjs-document-properties-file-name = Filnamn:
 pdfjs-document-properties-file-size = Filstorleik:
 # Variables:
+#   $kb (Number) - the PDF file size in kilobytes
+#   $b (Number) - the PDF file size in bytes
+pdfjs-document-properties-size-kb = { NUMBER($kb, maximumSignificantDigits: 3) } kB ({ $b } byte)
+# Variables:
+#   $mb (Number) - the PDF file size in megabytes
+#   $b (Number) - the PDF file size in bytes
+pdfjs-document-properties-size-mb = { NUMBER($mb, maximumSignificantDigits: 3) } MB ({ $b } byte)
+# Variables:
 #   $size_kb (Number) - the PDF file size in kilobytes
 #   $size_b (Number) - the PDF file size in bytes
 pdfjs-document-properties-kb = { $size_kb } KB ({ $size_b } bytes)
@@ -372,6 +380,22 @@ pdfjs-editor-resizer-label-bottom-right = Nedste høgre hjørne – endre størr
 pdfjs-editor-resizer-label-bottom-middle = Nedst i midten — endre størrelse
 pdfjs-editor-resizer-label-bottom-left = Nedste venstre hjørne – endre størrelse
 pdfjs-editor-resizer-label-middle-left = Midt til venstre — endre størrelse
+pdfjs-editor-resizer-top-left =
+    .aria-label = Øvste venstre hjørne – endre størrelse
+pdfjs-editor-resizer-top-middle =
+    .aria-label = Øvst i midten — endre størrelse
+pdfjs-editor-resizer-top-right =
+    .aria-label = Øvste høgre hjørne – endre størrelse
+pdfjs-editor-resizer-middle-right =
+    .aria-label = Midt til høgre – endre størrelse
+pdfjs-editor-resizer-bottom-right =
+    .aria-label = Nedste høgre hjørne – endre størrelse
+pdfjs-editor-resizer-bottom-middle =
+    .aria-label = Nedst i midten — endre størrelse
+pdfjs-editor-resizer-bottom-left =
+    .aria-label = Nedste venstre hjørne – endre størrelse
+pdfjs-editor-resizer-middle-left =
+    .aria-label = Midt til venstre — endre størrelse
 
 ## Color picker
 

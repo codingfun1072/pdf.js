@@ -43,6 +43,7 @@ import {
   SerializableEmpty,
 } from "./annotation_storage.js";
 import {
+  deprecated,
   DOMCanvasFactory,
   DOMCMapReaderFactory,
   DOMFilterFactory,
@@ -209,10 +210,11 @@ const DefaultStandardFontDataFactory =
  *   disabling of pre-fetching to work correctly.
  * @property {boolean} [pdfBug] - Enables special hooks for debugging PDF.js
  *   (see `web/debugger.js`). The default value is `false`.
- * @property {Object} [canvasFactory] - The factory instance that will be used
- *   when creating canvases. The default value is {new DOMCanvasFactory()}.
- * @property {Object} [filterFactory] - A factory instance that will be used
- *   to create SVG filters when rendering some images on the main canvas.
+ * @property {Object} [CanvasFactory] - The factory that will be used when
+ *    creating canvases. The default value is {DOMCanvasFactory}.
+ * @property {Object} [FilterFactory] - The factory that will be used to
+ *    create SVG filters when rendering some images on the main canvas.
+ *    The default value is {DOMFilterFactory}.
  * @property {boolean} [enableHWA] - Enables hardware acceleration for
  *   rendering. The default value is `false`.
  */
@@ -291,6 +293,8 @@ function getDocument(src = {}) {
   const disableStream = src.disableStream === true;
   const disableAutoFetch = src.disableAutoFetch === true;
   const pdfBug = src.pdfBug === true;
+  const CanvasFactory = src.CanvasFactory || DefaultCanvasFactory;
+  const FilterFactory = src.FilterFactory || DefaultFilterFactory;
   const enableHWA = src.enableHWA === true;
 
   // Parameters whose default values depend on other parameters.
@@ -309,10 +313,19 @@ function getDocument(src = {}) {
           standardFontDataUrl &&
           isValidFetchUrl(cMapUrl, document.baseURI) &&
           isValidFetchUrl(standardFontDataUrl, document.baseURI));
-  const canvasFactory =
-    src.canvasFactory || new DefaultCanvasFactory({ ownerDocument, enableHWA });
-  const filterFactory =
-    src.filterFactory || new DefaultFilterFactory({ docId, ownerDocument });
+
+  if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
+    if (src.canvasFactory) {
+      deprecated(
+        "`canvasFactory`-instance option, please use `CanvasFactory` instead."
+      );
+    }
+    if (src.filterFactory) {
+      deprecated(
+        "`filterFactory`-instance option, please use `FilterFactory` instead."
+      );
+    }
+  }
 
   // Parameters only intended for development/testing purposes.
   const styleElement =
@@ -326,18 +339,19 @@ function getDocument(src = {}) {
   // Ensure that the various factories can be initialized, when necessary,
   // since the user may provide *custom* ones.
   const transportFactory = {
-    canvasFactory,
-    filterFactory,
+    canvasFactory: new CanvasFactory({ ownerDocument, enableHWA }),
+    filterFactory: new FilterFactory({ docId, ownerDocument }),
+    cMapReaderFactory:
+      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+      useWorkerFetch
+        ? null
+        : new CMapReaderFactory({ baseUrl: cMapUrl, isCompressed: cMapPacked }),
+    standardFontDataFactory:
+      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+      useWorkerFetch
+        ? null
+        : new StandardFontDataFactory({ baseUrl: standardFontDataUrl }),
   };
-  if (!useWorkerFetch) {
-    transportFactory.cMapReaderFactory = new CMapReaderFactory({
-      baseUrl: cMapUrl,
-      isCompressed: cMapPacked,
-    });
-    transportFactory.standardFontDataFactory = new StandardFontDataFactory({
-      baseUrl: standardFontDataUrl,
-    });
-  }
 
   if (!worker) {
     const workerParams = {
@@ -413,34 +427,34 @@ function getDocument(src = {}) {
         });
       } else if (!data) {
         if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-          throw new Error("Not implemented: createPDFNetworkStream");
+          throw new Error("Not implemented: NetworkStream");
         }
         if (!url) {
           throw new Error("getDocument - no `url` parameter provided.");
         }
-        const createPDFNetworkStream = params => {
-          if (
-            typeof PDFJSDev !== "undefined" &&
-            PDFJSDev.test("GENERIC") &&
-            isNodeJS
-          ) {
-            const isFetchSupported = function () {
-              return (
-                typeof fetch !== "undefined" &&
-                typeof Response !== "undefined" &&
-                "body" in Response.prototype
-              );
-            };
-            return isFetchSupported() && isValidFetchUrl(params.url)
-              ? new PDFFetchStream(params)
-              : new PDFNodeStream(params);
-          }
-          return isValidFetchUrl(params.url)
-            ? new PDFFetchStream(params)
-            : new PDFNetworkStream(params);
-        };
+        let NetworkStream;
 
-        networkStream = createPDFNetworkStream({
+        if (
+          typeof PDFJSDev !== "undefined" &&
+          PDFJSDev.test("GENERIC") &&
+          isNodeJS
+        ) {
+          const isFetchSupported =
+            typeof fetch !== "undefined" &&
+            typeof Response !== "undefined" &&
+            "body" in Response.prototype;
+
+          NetworkStream =
+            isFetchSupported && isValidFetchUrl(url)
+              ? PDFFetchStream
+              : PDFNodeStream;
+        } else {
+          NetworkStream = isValidFetchUrl(url)
+            ? PDFFetchStream
+            : PDFNetworkStream;
+        }
+
+        networkStream = new NetworkStream({
           url,
           length,
           httpHeaders,
@@ -779,6 +793,13 @@ class PDFDocumentProxy {
    */
   get annotationStorage() {
     return this._transport.annotationStorage;
+  }
+
+  /**
+   * @type {Object} The canvas factory instance.
+   */
+  get canvasFactory() {
+    return this._transport.canvasFactory;
   }
 
   /**
@@ -1961,7 +1982,7 @@ class PDFPageProxy {
 }
 
 class LoopbackPort {
-  #listeners = new Set();
+  #listeners = new Map();
 
   #deferred = Promise.resolve();
 
@@ -1971,21 +1992,39 @@ class LoopbackPort {
     };
 
     this.#deferred.then(() => {
-      for (const listener of this.#listeners) {
+      for (const [listener] of this.#listeners) {
         listener.call(this, event);
       }
     });
   }
 
-  addEventListener(name, listener) {
-    this.#listeners.add(listener);
+  addEventListener(name, listener, options = null) {
+    let rmAbort = null;
+    if (options?.signal instanceof AbortSignal) {
+      const { signal } = options;
+      if (signal.aborted) {
+        warn("LoopbackPort - cannot use an `aborted` signal.");
+        return;
+      }
+      const onAbort = () => this.removeEventListener(name, listener);
+      rmAbort = () => signal.removeEventListener("abort", onAbort);
+
+      signal.addEventListener("abort", onAbort);
+    }
+    this.#listeners.set(listener, rmAbort);
   }
 
   removeEventListener(name, listener) {
+    const rmAbort = this.#listeners.get(listener);
+    rmAbort?.();
+
     this.#listeners.delete(listener);
   }
 
   terminate() {
+    for (const [, rmAbort] of this.#listeners) {
+      rmAbort?.();
+    }
     this.#listeners.clear();
   }
 }

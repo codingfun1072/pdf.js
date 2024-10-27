@@ -17,7 +17,6 @@
 import {
   AbortException,
   assert,
-  CMapCompressionType,
   FONT_IDENTITY_MATRIX,
   FormatError,
   IDENTITY_MATRIX,
@@ -63,7 +62,6 @@ import {
   LocalTilingPatternCache,
   RegionalImageCache,
 } from "./image_utils.js";
-import { NullStream, Stream } from "./stream.js";
 import { BaseStream } from "./base_stream.js";
 import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
@@ -77,6 +75,7 @@ import { ImageResizer } from "./image_resizer.js";
 import { MurmurHash3_64 } from "../shared/murmurhash3.js";
 import { OperatorList } from "./operator_list.js";
 import { PDFImage } from "./image.js";
+import { Stream } from "./stream.js";
 
 const DefaultPartialEvaluatorOptions = Object.freeze({
   maxImageSize: -1,
@@ -392,17 +391,15 @@ class PartialEvaluator {
       }
       data = {
         cMapData: new Uint8Array(await response.arrayBuffer()),
-        compressionType: CMapCompressionType.BINARY,
+        isCompressed: true,
       };
     } else {
       // Get the data on the main-thread instead.
       data = await this.handler.sendWithPromise("FetchBuiltInCMap", { name });
     }
+    // Cache the CMap data, to avoid fetching it repeatedly.
+    this.builtInCMapCache.set(name, data);
 
-    if (data.compressionType !== CMapCompressionType.NONE) {
-      // Given the size of uncompressed CMaps, only cache compressed ones.
-      this.builtInCMapCache.set(name, data);
-    }
     return data;
   }
 
@@ -2079,6 +2076,11 @@ class PartialEvaluator {
           case OPS.setFillColorN:
             cs = stateManager.state.patternFillColorSpace;
             if (!cs) {
+              if (isNumberArray(args, null)) {
+                args = ColorSpace.singletons.gray.getRgb(args, 0);
+                fn = OPS.setFillRGBColor;
+                break;
+              }
               args = [];
               fn = OPS.setFillTransparent;
               break;
@@ -2106,6 +2108,11 @@ class PartialEvaluator {
           case OPS.setStrokeColorN:
             cs = stateManager.state.patternStrokeColorSpace;
             if (!cs) {
+              if (isNumberArray(args, null)) {
+                args = ColorSpace.singletons.gray.getRgb(args, 0);
+                fn = OPS.setStrokeRGBColor;
+                break;
+              }
               args = [];
               fn = OPS.setStrokeTransparent;
               break;
@@ -2132,14 +2139,26 @@ class PartialEvaluator {
             break;
 
           case OPS.shadingFill:
-            var shadingRes = resources.get("Shading");
-            if (!shadingRes) {
-              throw new FormatError("No shading resource found");
-            }
+            let shading;
+            try {
+              const shadingRes = resources.get("Shading");
+              if (!shadingRes) {
+                throw new FormatError("No shading resource found");
+              }
 
-            var shading = shadingRes.get(args[0].name);
-            if (!shading) {
-              throw new FormatError("No shading object found");
+              shading = shadingRes.get(args[0].name);
+              if (!shading) {
+                throw new FormatError("No shading object found");
+              }
+            } catch (reason) {
+              if (reason instanceof AbortException) {
+                continue;
+              }
+              if (self.options.ignoreErrors) {
+                warn(`getOperatorList - ignoring Shading: "${reason}".`);
+                continue;
+              }
+              throw reason;
             }
             const patternId = self.parseShading({
               shading,
@@ -4403,12 +4422,20 @@ class PartialEvaluator {
     let fontFile, subtype, length1, length2, length3;
     try {
       fontFile = descriptor.get("FontFile", "FontFile2", "FontFile3");
+
+      if (fontFile) {
+        if (!(fontFile instanceof BaseStream)) {
+          throw new FormatError("FontFile should be a stream");
+        } else if (fontFile.isEmpty) {
+          throw new FormatError("FontFile is empty");
+        }
+      }
     } catch (ex) {
       if (!this.options.ignoreErrors) {
         throw ex;
       }
       warn(`translateFont - fetching "${fontName.name}" font file: "${ex}".`);
-      fontFile = new NullStream();
+      fontFile = null;
     }
     let isInternalFont = false;
     let glyphScaleFactors = null;

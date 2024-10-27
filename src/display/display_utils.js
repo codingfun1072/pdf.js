@@ -63,7 +63,7 @@ class DOMFilterFactory extends BaseFilterFactory {
 
   #id = 0;
 
-  constructor({ docId, ownerDocument = globalThis.document } = {}) {
+  constructor({ docId, ownerDocument = globalThis.document }) {
     super();
     this.#docId = docId;
     this.#document = ownerDocument;
@@ -496,7 +496,7 @@ class DOMFilterFactory extends BaseFilterFactory {
 }
 
 class DOMCanvasFactory extends BaseCanvasFactory {
-  constructor({ ownerDocument = globalThis.document, enableHWA = false } = {}) {
+  constructor({ ownerDocument = globalThis.document, enableHWA = false }) {
     super({ enableHWA });
     this._document = ownerDocument;
   }
@@ -564,17 +564,14 @@ class DOMCMapReaderFactory extends BaseCMapReaderFactory {
   /**
    * @ignore
    */
-  _fetchData(url, compressionType) {
-    return fetchData(
+  async _fetch(url) {
+    const data = await fetchData(
       url,
       /* type = */ this.isCompressed ? "arraybuffer" : "text"
-    ).then(data => ({
-      cMapData:
-        data instanceof ArrayBuffer
-          ? new Uint8Array(data)
-          : stringToBytes(data),
-      compressionType,
-    }));
+    );
+    return data instanceof ArrayBuffer
+      ? new Uint8Array(data)
+      : stringToBytes(data);
   }
 }
 
@@ -582,10 +579,9 @@ class DOMStandardFontDataFactory extends BaseStandardFontDataFactory {
   /**
    * @ignore
    */
-  _fetchData(url) {
-    return fetchData(url, /* type = */ "arraybuffer").then(
-      data => new Uint8Array(data)
-    );
+  async _fetch(url) {
+    const data = await fetchData(url, /* type = */ "arraybuffer");
+    return new Uint8Array(data);
   }
 }
 
@@ -935,9 +931,9 @@ function deprecated(details) {
   console.log("Deprecated API usage: " + details);
 }
 
-let pdfDateStringRegex;
-
 class PDFDateString {
+  static #regex;
+
   /**
    * Convert a PDF date string to a JavaScript `Date` object.
    *
@@ -960,7 +956,7 @@ class PDFDateString {
     }
 
     // Lazily initialize the regular expression.
-    pdfDateStringRegex ||= new RegExp(
+    this.#regex ||= new RegExp(
       "^D:" + // Prefix (required)
         "(\\d{4})" + // Year (required)
         "(\\d{2})?" + // Month (optional)
@@ -978,7 +974,7 @@ class PDFDateString {
     // Optional fields that don't satisfy the requirements from the regular
     // expression (such as incorrect digit counts or numbers that are out of
     // range) will fall back the defaults from the specification.
-    const matches = pdfDateStringRegex.exec(input);
+    const matches = this.#regex.exec(input);
     if (!matches) {
       return null;
     }
@@ -1103,8 +1099,12 @@ function setLayerDimensions(
 
     const w = `var(--scale-factor) * ${pageWidth}px`,
       h = `var(--scale-factor) * ${pageHeight}px`;
-    const widthStr = useRound ? `round(${w}, 1px)` : `calc(${w})`,
-      heightStr = useRound ? `round(${h}, 1px)` : `calc(${h})`;
+    const widthStr = useRound
+        ? `round(down, ${w}, var(--scale-round-x, 1px))`
+        : `calc(${w})`,
+      heightStr = useRound
+        ? `round(down, ${h}, var(--scale-round-y, 1px))`
+        : `calc(${h})`;
 
     if (!mustFlip || viewport.rotation % 180 === 0) {
       style.width = widthStr;
@@ -1117,6 +1117,36 @@ function setLayerDimensions(
 
   if (mustRotate) {
     div.setAttribute("data-main-rotation", viewport.rotation);
+  }
+}
+
+/**
+ * Scale factors for the canvas, necessary with HiDPI displays.
+ */
+class OutputScale {
+  constructor() {
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    /**
+     * @type {number} Horizontal scale.
+     */
+    this.sx = pixelRatio;
+
+    /**
+     * @type {number} Vertical scale.
+     */
+    this.sy = pixelRatio;
+  }
+
+  /**
+   * @type {boolean} Returns `true` when scaling is required, `false` otherwise.
+   */
+  get scaled() {
+    return this.sx !== 1 || this.sy !== 1;
+  }
+
+  get symmetric() {
+    return this.sx === this.sy;
   }
 }
 
@@ -1139,6 +1169,7 @@ export {
   isPdfFile,
   isValidFetchUrl,
   noContextMenu,
+  OutputScale,
   PageViewport,
   PDFDateString,
   PixelsPerInch,

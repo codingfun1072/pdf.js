@@ -80,6 +80,8 @@ class AnnotationEditor {
 
   _initialOptions = Object.create(null);
 
+  _initialData = null;
+
   _isVisible = true;
 
   _uiManager = null;
@@ -207,7 +209,7 @@ class AnnotationEditor {
    * Initialize the l10n stuff for this type of editor.
    * @param {Object} l10n
    */
-  static initialize(l10n, _uiManager, options) {
+  static initialize(l10n, _uiManager) {
     AnnotationEditor._l10nResizer ||= Object.freeze({
       topLeft: "pdfjs-editor-resizer-top-left",
       topMiddle: "pdfjs-editor-resizer-top-middle",
@@ -234,11 +236,6 @@ class AnnotationEditor {
       ].map(str => [str, l10n.get.bind(l10n, str)]),
     ]);
 
-    if (options?.strings) {
-      for (const str of options.strings) {
-        AnnotationEditor._l10nPromise.set(str, l10n.get(str));
-      }
-    }
     if (AnnotationEditor._borderLineWidth !== -1) {
       return;
     }
@@ -659,11 +656,7 @@ class AnnotationEditor {
       parentScale,
       pageDimensions: [pageWidth, pageHeight],
     } = this;
-    const scaledWidth = pageWidth * parentScale;
-    const scaledHeight = pageHeight * parentScale;
-    return FeatureTest.isCSSRoundSupported
-      ? [Math.round(scaledWidth), Math.round(scaledHeight)]
-      : [scaledWidth, scaledHeight];
+    return [pageWidth * parentScale, pageHeight * parentScale];
   }
 
   /**
@@ -1111,6 +1104,10 @@ class AnnotationEditor {
     this.#selectOnPointerEvent(event);
   }
 
+  get isSelected() {
+    return this._uiManager.isSelected(this);
+  }
+
   #selectOnPointerEvent(event) {
     const { isMac } = FeatureTest.platform;
     if (
@@ -1125,7 +1122,7 @@ class AnnotationEditor {
   }
 
   #setUpDragSession(event) {
-    const isSelected = this._uiManager.isSelected(this);
+    const { isSelected } = this;
     this._uiManager.setUpDragSession();
 
     const ac = new AbortController();
@@ -1340,6 +1337,19 @@ class AnnotationEditor {
   rotate(_angle) {}
 
   /**
+   * Serialize the editor when it has been deleted.
+   * @returns {Object}
+   */
+  serializeDeleted() {
+    return {
+      id: this.annotationElementId,
+      deleted: true,
+      pageIndex: this.pageIndex,
+      popupRef: this._initialData?.popupRef || "",
+    };
+  }
+
+  /**
    * Serialize the editor.
    * The result of the serialization will be used to construct a
    * new annotation to add to the pdf document.
@@ -1360,9 +1370,9 @@ class AnnotationEditor {
    * @param {Object} data
    * @param {AnnotationEditorLayer} parent
    * @param {AnnotationEditorUIManager} uiManager
-   * @returns {AnnotationEditor | null}
+   * @returns {Promise<AnnotationEditor | null>}
    */
-  static deserialize(data, parent, uiManager) {
+  static async deserialize(data, parent, uiManager) {
     const editor = new this.prototype.constructor({
       parent,
       id: parent.getNextId(),
@@ -1813,11 +1823,7 @@ class FakeEditor extends AnnotationEditor {
   }
 
   serialize() {
-    return {
-      id: this.annotationElementId,
-      deleted: true,
-      pageIndex: this.pageIndex,
-    };
+    return this.serializeDeleted();
   }
 }
 

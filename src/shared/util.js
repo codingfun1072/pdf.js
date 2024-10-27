@@ -240,11 +240,6 @@ const VerbosityLevel = {
   INFOS: 5,
 };
 
-const CMapCompressionType = {
-  NONE: 0,
-  BINARY: 1,
-};
-
 // All the possible operations for an operator list.
 const OPS = {
   // Intentionally start from 1 so it is easy to spot bad operators that will be
@@ -636,9 +631,18 @@ class FeatureTest {
     ) {
       return shadow(this, "platform", {
         isMac: navigator.platform.includes("Mac"),
+        isWindows: navigator.platform.includes("Win"),
+        isFirefox:
+          (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+          (typeof navigator?.userAgent === "string" &&
+            navigator.userAgent.includes("Firefox")),
       });
     }
-    return shadow(this, "platform", { isMac: false });
+    return shadow(this, "platform", {
+      isMac: false,
+      isWindows: false,
+      isFirefox: false,
+    });
   }
 
   static get isCSSRoundSupported() {
@@ -1110,7 +1114,6 @@ export {
   BaseException,
   BASELINE_FACTOR,
   bytesToString,
-  CMapCompressionType,
   createValidAbsoluteUrl,
   DocumentActionEventType,
   FeatureTest,

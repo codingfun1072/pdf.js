@@ -225,6 +225,10 @@ function getEditorSelector(n) {
   return `#pdfjs_internal_editor_${n}`;
 }
 
+function getAnnotationSelector(id) {
+  return `[data-annotation-id="${id}"]`;
+}
+
 function getSelectedEditors(page) {
   return page.evaluate(() => {
     const elements = document.querySelectorAll(".selectedEditor");
@@ -749,7 +753,7 @@ async function switchToEditor(name, page, disable = false) {
       { once: true }
     );
   });
-  await page.click(`#editor${name}`);
+  await page.click(`#editor${name}Button`);
   name = name.toLowerCase();
   await page.waitForSelector(
     ".annotationEditorLayer" +
@@ -769,6 +773,7 @@ export {
   createPromise,
   dragAndDropAnnotation,
   firstPageOnTop,
+  getAnnotationSelector,
   getAnnotationStorage,
   getComputedStyleSelector,
   getEditorDimensions,
